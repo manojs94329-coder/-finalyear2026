@@ -1,0 +1,30 @@
+# .NET Build and Debug
+**/bin/
+**/obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Flutter & Dart
+**/.dart_tool/
+**/build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Logs & Temporary Files & Binaries
+*.log
+*.tmp
+*.bak
+*.apk
+.DS_Store
+Thumbs.db
