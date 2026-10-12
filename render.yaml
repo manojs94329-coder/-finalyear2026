@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: ambulance-booking-system
+    runtime: docker
+    dockerfilePath: backend/AmbulanceBooking.Api/Dockerfile
+    dockerContext: backend/AmbulanceBooking.Api
+    plan: free
+    region: oregon
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5000
+      - key: PORT
+        value: 5000
+      - key: Jwt__Key
+        value: AmbulanceBookingSuperSecretKey2026DeploymentProduction
+      - key: Jwt__Issuer
+        value: AmbulanceBookingApi
+      - key: Jwt__Audience
+        value: AmbulanceBookingMobileApp
+      - key: ConnectionStrings__DefaultConnection
+        sync: false
