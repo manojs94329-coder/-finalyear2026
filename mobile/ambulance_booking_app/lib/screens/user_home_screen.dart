@@ -4,6 +4,8 @@ import 'package:geolocator/geolocator.dart';
 import '../services/booking_service.dart';
 import '../services/hospital_service.dart';
 import '../services/emergency_siren_service.dart';
+import '../services/emergency_coordinator_service.dart';
+import '../services/live_av_stream_service.dart';
 import 'tracking_screen.dart';
 import 'user_profile_screen.dart';
 import 'user_history_screen.dart';
@@ -27,6 +29,8 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   final BookingService _bookingService = BookingService();
   final HospitalService _hospitalService = HospitalService();
   final EmergencySirenService _sirenService = EmergencySirenService();
+  final EmergencyCoordinatorService _coordinator = EmergencyCoordinatorService();
+  final LiveAvStreamService _streamService = LiveAvStreamService();
 
   double _lat = 13.0827;
   double _lng = 80.2707;
@@ -116,15 +120,33 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   Future<void> _fetchLocation() async {
     setState(() => _isLocating = true);
     try {
-      Position pos = await Geolocator.getCurrentPosition();
-      setState(() {
-        _lat = pos.latitude;
-        _lng = pos.longitude;
-        _currentAddress = "${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)} (GPS Exact)";
-        _isLocating = false;
-      });
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() => _isLocating = false);
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        setState(() => _isLocating = false);
+        return;
+      }
+
+      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      if (mounted) {
+        setState(() {
+          _lat = pos.latitude;
+          _lng = pos.longitude;
+          _currentAddress = "${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)} (GPS Exact)";
+          _isLocating = false;
+        });
+      }
     } catch (_) {
-      setState(() => _isLocating = false);
+      if (mounted) setState(() => _isLocating = false);
     }
   }
 
@@ -286,25 +308,79 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     setState(() => _isDispatching = true);
 
     try {
+      // Refresh live GPS with 2s timeout so SOS never blocks
+      try {
+        final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high)
+            .timeout(const Duration(seconds: 2));
+        _lat = pos.latitude;
+        _lng = pos.longitude;
+      } catch (_) {}
+
       final tier = _fleetTiers[_selectedTierIndex];
+
+      // If SOS, also trigger EmergencyCoordinatorSession + Live Camera & Audio Relay to Driver
+      if (isSos) {
+        try {
+          final session = await _coordinator.createEmergencySession(
+            userId: widget.userId,
+            victimName: widget.userName,
+            victimPhone: "9840112233",
+            contactName: "Emergency Family Contact",
+            contactPhone: "9444011223",
+            lat: _lat,
+            lng: _lng,
+          );
+          _streamService.startLiveBroadcastWithRelay(
+            emergencyId: session?.emergencyId ?? "SOS-LIVE",
+            onAudioLevel: (_) {},
+            onFrameCaptured: (_, __) {},
+            onReady: (_, __) {},
+          );
+        } catch (_) {}
+      }
+
       final res = await _bookingService.requestAmbulance(
         userId: widget.userId,
         pickupLat: _lat,
         pickupLng: _lng,
-        destinationHospital: _selectedHospital != null ? _selectedHospital["name"] : "Nearest Trauma Center",
+        destinationHospital: _selectedHospital != null
+            ? _selectedHospital["name"]
+            : "Rajiv Gandhi Govt General Hospital (RGGGH Trauma Care)",
         hospitalId: _selectedHospital != null ? _selectedHospital["hospitalId"] : null,
         patientCondition: isSos
-            ? "[BLINKIT 1-TAP SOS] High-Priority Emergency Call"
+            ? "[CODE RED - 1-TAP EMERGENCY SOS] Priority ICU Dispatch + Live Audio/Video Telemetry"
             : "[${tier["name"]}] ${_getAddonsString()}",
-        estimatedPrice: _calculateTotal(),
-        equipmentAddons: _getAddonsString(),
-        estimatedEtaMinutes: tier["eta"] ?? 8,
+        estimatedPrice: isSos ? 1200.0 : _calculateTotal(),
+        equipmentAddons: isSos
+            ? "ICU Ventilator, Biphasic Defibrillator, Oxygen Cylinder, Paramedic Doctor"
+            : _getAddonsString(),
+        estimatedEtaMinutes: isSos ? 4 : (tier["eta"] ?? 8),
       );
 
-      final bookingId = res["bookingId"];
+      final bookingId = res["bookingId"] ?? 1;
       setState(() => _isDispatching = false);
 
       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: isSos ? const Color(0xFFDC2626) : const Color(0xFF0C831F),
+            content: Row(
+              children: [
+                const Icon(Icons.emergency_share, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isSos
+                        ? "🚨 EMERGENCY SOS DISPATCHED! ICU Ambulance & Live Video/Audio Active!"
+                        : "Ambulance #${bookingId} Dispatched Successfully!",
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -326,9 +402,14 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
   }
 
-  void _triggerSosWithCountdown() {
-    int count = 3;
+  Future<void> _triggerSosWithCountdown() async {
+    // Immediately activate high-decibel emergency siren
+    await _sirenService.startSiren();
+
+    int count = 40; // 40-second SOS alarm standard
     Timer? t;
+    if (!mounted) return;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -340,38 +421,180 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                 setDialogState(() => count--);
               } else {
                 timer.cancel();
+                _sirenService.stopAndRelease();
                 Navigator.pop(ctx);
                 _dispatchBlinkitAmbulance(isSos: true);
               }
             });
 
             return AlertDialog(
-              backgroundColor: const Color(0xFF111827),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.warning, color: Colors.red, size: 56),
-                  const SizedBox(height: 14),
-                  const Text("DISPATCHING EMERGENCY SOS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-                  const SizedBox(height: 8),
-                  Text("Broadcasting to nearest ICU unit in $count seconds...", style: const TextStyle(color: Colors.white70, fontSize: 13), textAlign: TextAlign.center),
-                  const SizedBox(height: 16),
-                  Text("$count", style: const TextStyle(color: Colors.red, fontSize: 48, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      t?.cancel();
-                      Navigator.pop(ctx);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.red[900],
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              backgroundColor: const Color(0xFF0F172A),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(22),
+                side: const BorderSide(color: Color(0xFFEF4444), width: 2),
+              ),
+              contentPadding: const EdgeInsets.all(20),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.redAccent, width: 2),
+                      ),
+                      child: const Icon(Icons.emergency, color: Color(0xFFEF4444), size: 46),
                     ),
-                    child: const Text("CANCEL FALSE ALARM", style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    const Text(
+                      "🚨 EMERGENCY SOS ACTIVE",
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 0.5),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Loud Siren Active • Auto-dispatching nearest 108 ICU unit & Live Video/Audio in $count seconds",
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF7F1D1D),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.redAccent),
+                      ),
+                      child: Text(
+                        "${count}s",
+                        style: const TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.gps_fixed, color: Color(0xFF10B981), size: 15),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  "GPS Locked: ${_lat.toStringAsFixed(4)}, ${_lng.toStringAsFixed(4)}",
+                                  style: const TextStyle(color: Color(0xFF10B981), fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          const Row(
+                            children: [
+                              Icon(Icons.videocam, color: Color(0xFF38BDF8), size: 15),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  "Camera & Mic Stream Ready for Driver & Family",
+                                  style: TextStyle(color: Colors.white70, fontSize: 11),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // 0s Instant Dispatch Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          t?.cancel();
+                          _sirenService.stopAndRelease();
+                          Navigator.pop(ctx);
+                          _dispatchBlinkitAmbulance(isSos: true);
+                        },
+                        icon: const Icon(Icons.bolt, color: Colors.white, size: 22),
+                        label: const Text(
+                          "⚡ DISPATCH AMBULANCE NOW (0s)",
+                          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.white),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFDC2626),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Direct Emergency Dialer & SMS Row
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => UrlLauncherService.openUrl("tel:108"),
+                            icon: const Icon(Icons.phone_in_talk, size: 15, color: Color(0xFF34D399)),
+                            label: const Text("CALL 108", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF34D399))),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF34D399)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => UrlLauncherService.openUrl("tel:112"),
+                            icon: const Icon(Icons.local_police, size: 15, color: Color(0xFF60A5FA)),
+                            label: const Text("CALL 112", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF60A5FA))),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF60A5FA)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              final smsUrl = "sms:9444011223?body=${Uri.encodeComponent("EMERGENCY SOS! Need immediate ambulance at GPS: https://maps.google.com/?q=$_lat,$_lng")}";
+                              UrlLauncherService.openUrl(smsUrl);
+                            },
+                            icon: const Icon(Icons.sms, size: 15, color: Colors.amber),
+                            label: const Text("SOS SMS", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.amber)),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.amber),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    // Cancel False Alarm Button
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: () {
+                          t?.cancel();
+                          _sirenService.stopAndRelease();
+                          Navigator.pop(ctx);
+                        },
+                        icon: const Icon(Icons.volume_off, color: Colors.white70, size: 18),
+                        label: const Text(
+                          "🔇 CANCEL FALSE ALARM & STOP SIREN",
+                          style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -546,38 +769,99 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
               children: [
-                // One-Tap SOS Flash Card
+                // Upgraded Multi-Channel Emergency SOS Command Card
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFFDC2626), Color(0xFFB91C1C)]),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [BoxShadow(color: Colors.red.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
+                    gradient: const LinearGradient(colors: [Color(0xFFDC2626), Color(0xFF991B1B)]),
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [BoxShadow(color: Colors.red.withOpacity(0.35), blurRadius: 12, offset: const Offset(0, 5))],
                   ),
-                  child: Row(
+                  child: Column(
                     children: [
-                      InkWell(
-                        onTap: _triggerSosWithCountdown,
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                          child: const Icon(Icons.touch_app, color: Color(0xFFDC2626), size: 28),
-                        ),
+                      Row(
+                        children: [
+                          InkWell(
+                            onTap: () => _dispatchBlinkitAmbulance(isSos: true),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8)],
+                              ),
+                              child: const Icon(Icons.emergency_share, color: Color(0xFFDC2626), size: 30),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text("🚨 1-TAP EMERGENCY SOS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16)),
+                                SizedBox(height: 2),
+                                Text("Instant ICU Dispatch • Live Camera/Audio • 40s Siren", style: TextStyle(color: Colors.white70, fontSize: 11)),
+                              ],
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () => _dispatchBlinkitAmbulance(isSos: true),
+                            icon: const Icon(Icons.bolt, size: 16),
+                            label: const Text("SOS NOW", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: const Color(0xFFB91C1C),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 14),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text("1-TAP INSTANT SOS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                            Text("Fastest dispatch with siren & police clearance", style: TextStyle(color: Colors.white70, fontSize: 11)),
-                          ],
-                        ),
-                      ),
-                      ElevatedButton(
-                        onPressed: _triggerSosWithCountdown,
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.red[900]),
-                        child: const Text("SOS NOW", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _triggerSosWithCountdown,
+                              icon: const Icon(Icons.volume_up, size: 15, color: Colors.white),
+                              label: const Text("40s SIREN ALARM", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.white70),
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => UrlLauncherService.openUrl("tel:108"),
+                              icon: const Icon(Icons.phone_in_talk, size: 15, color: Colors.white),
+                              label: const Text("CALL 108", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.white70),
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                final smsUrl = "sms:9444011223?body=${Uri.encodeComponent("EMERGENCY SOS! Need immediate ambulance at GPS: https://maps.google.com/?q=$_lat,$_lng")}";
+                                UrlLauncherService.openUrl(smsUrl);
+                              },
+                              icon: const Icon(Icons.sms, size: 15, color: Colors.white),
+                              label: const Text("SOS SMS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.white70),
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),

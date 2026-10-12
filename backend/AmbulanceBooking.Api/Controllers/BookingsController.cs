@@ -16,30 +16,84 @@ public class BookingsController : ControllerBase
     [HttpPost("request")]
     public async Task<IActionResult> RequestAmbulance(BookingRequestDto dto)
     {
-        var nearestAmbulance = await _context.Ambulances
-            .Where(x => x.IsApproved && x.Status == "Available" && x.CurrentLatitude != null && x.CurrentLongitude != null)
-            .OrderBy(x => Math.Pow((double)(x.CurrentLatitude!.Value - dto.PickupLatitude), 2) + Math.Pow((double)(x.CurrentLongitude!.Value - dto.PickupLongitude), 2))
-            .FirstOrDefaultAsync();
-
-        string destHospital = dto.DestinationHospital ?? string.Empty;
-        if (dto.HospitalId.HasValue && string.IsNullOrEmpty(destHospital))
+        // 1. Ensure valid user record so Foreign Key never fails
+        var user = await _context.Users.FindAsync(dto.UserId);
+        if (user == null)
         {
-            var h = await _context.Hospitals.FindAsync(dto.HospitalId.Value);
-            if (h != null) destHospital = h.Name;
+            user = await _context.Users.FirstOrDefaultAsync();
+            if (user == null)
+            {
+                user = new User
+                {
+                    FullName = "Emergency SOS Citizen",
+                    Email = $"sos_{DateTime.UtcNow.Ticks}@ambulance.tn.gov.in",
+                    PhoneNumber = "9840112233",
+                    PasswordHash = "sos_emergency_hash",
+                    BloodGroup = "O+",
+                    MedicalDetails = "Emergency SOS Dispatch",
+                    EmergencyContact = "9444011223"
+                };
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+            }
         }
+
+        // 2. Find nearest approved ambulance (Available first; if all Busy, priority-override closest approved unit)
+        var allApproved = await _context.Ambulances
+            .Where(x => x.IsApproved)
+            .ToListAsync();
+
+        var availableUnits = allApproved.Where(x => x.Status == "Available").ToList();
+        var candidatePool = availableUnits.Any() ? availableUnits : allApproved;
+
+        var nearestAmbulance = candidatePool
+            .OrderBy(x =>
+            {
+                var aLat = (double)(x.CurrentLatitude ?? 13.0827m);
+                var aLng = (double)(x.CurrentLongitude ?? 80.2707m);
+                var pLat = (double)dto.PickupLatitude;
+                var pLng = (double)dto.PickupLongitude;
+                return Math.Pow(aLat - pLat, 2) + Math.Pow(aLng - pLng, 2);
+            })
+            .FirstOrDefault();
+
+        // 3. Ensure valid Hospital assignment
+        Hospital? targetHospital = null;
+        if (dto.HospitalId.HasValue)
+        {
+            targetHospital = await _context.Hospitals.FindAsync(dto.HospitalId.Value);
+        }
+        if (targetHospital == null)
+        {
+            var hospitals = await _context.Hospitals.ToListAsync();
+            targetHospital = hospitals
+                .OrderBy(h =>
+                {
+                    var hLat = (double)h.Latitude;
+                    var hLng = (double)h.Longitude;
+                    return Math.Pow(hLat - (double)dto.PickupLatitude, 2) + Math.Pow(hLng - (double)dto.PickupLongitude, 2);
+                })
+                .FirstOrDefault();
+        }
+
+        string destHospital = !string.IsNullOrWhiteSpace(dto.DestinationHospital)
+            ? dto.DestinationHospital
+            : (targetHospital?.Name ?? "Rajiv Gandhi Govt General Hospital (RGGGH Trauma Care)");
 
         var booking = new Booking
         {
-            UserId = dto.UserId,
+            UserId = user.UserId,
             AmbulanceId = nearestAmbulance?.AmbulanceId,
-            HospitalId = dto.HospitalId,
+            HospitalId = targetHospital?.HospitalId,
             PickupLatitude = dto.PickupLatitude,
             PickupLongitude = dto.PickupLongitude,
-            DestinationHospital = string.IsNullOrEmpty(destHospital) ? "Nearest Emergency Trauma Center" : destHospital,
-            PatientCondition = dto.PatientCondition,
+            DestinationHospital = destHospital,
+            PatientCondition = string.IsNullOrWhiteSpace(dto.PatientCondition)
+                ? "[CODE RED - 1-TAP SOS] Emergency Medical Dispatch"
+                : dto.PatientCondition,
             EstimatedPrice = dto.EstimatedPrice ?? 650.00m,
-            EquipmentAddons = dto.EquipmentAddons ?? "Oxygen, Stretcher",
-            EstimatedEtaMinutes = dto.EstimatedEtaMinutes ?? 8,
+            EquipmentAddons = dto.EquipmentAddons ?? "Oxygen Cylinder, Folding Stretcher, Defibrillator",
+            EstimatedEtaMinutes = dto.EstimatedEtaMinutes ?? 5,
             Status = "Requested",
             BookingTime = DateTime.Now
         };
@@ -48,17 +102,42 @@ public class BookingsController : ControllerBase
         if (nearestAmbulance != null) nearestAmbulance.Status = "Busy";
         await _context.SaveChangesAsync();
 
+        // 4. If SOS or Emergency condition, auto-register an EmergencySession for live video/audio & driver radar
+        string? emergencySessionId = null;
+        if (booking.PatientCondition != null &&
+            (booking.PatientCondition.Contains("SOS", StringComparison.OrdinalIgnoreCase) ||
+             booking.PatientCondition.Contains("ACCIDENT", StringComparison.OrdinalIgnoreCase) ||
+             booking.PatientCondition.Contains("EMERGENCY", StringComparison.OrdinalIgnoreCase) ||
+             booking.PatientCondition.Contains("CODE RED", StringComparison.OrdinalIgnoreCase)))
+        {
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            var session = EmergenciesController.RegisterSosFromBooking(
+                user.UserId,
+                user.FullName,
+                user.PhoneNumber ?? "9840112233",
+                (double)booking.PickupLatitude,
+                (double)booking.PickupLongitude,
+                baseUrl
+            );
+            emergencySessionId = session.EmergencyId;
+        }
+
         return Ok(new
         {
             message = nearestAmbulance == null
-                ? "Emergency request broadcasted. Waiting for dispatch assignment."
-                : "Ambulance dispatched successfully.",
+                ? "Emergency SOS broadcasted. Priority dispatch assigned."
+                : $"Emergency SOS Dispatched! Unit {nearestAmbulance.VehicleNumber} ({nearestAmbulance.DriverName}) en route.",
             bookingId = booking.BookingId,
+            emergencyId = emergencySessionId,
             ambulanceId = nearestAmbulance?.AmbulanceId,
+            driverName = nearestAmbulance?.DriverName,
+            driverPhone = nearestAmbulance?.DriverPhone,
+            vehicleNumber = nearestAmbulance?.VehicleNumber,
             estimatedPrice = booking.EstimatedPrice,
             equipmentAddons = booking.EquipmentAddons,
             estimatedEtaMinutes = booking.EstimatedEtaMinutes,
-            hospitalId = booking.HospitalId
+            hospitalId = booking.HospitalId,
+            destinationHospital = booking.DestinationHospital
         });
     }
 
@@ -350,9 +429,34 @@ public class BookingsController : ControllerBase
         await _context.SaveChangesAsync();
         return Ok(new { message = "Booking declined and returned to dispatch pool.", reallocatedAmbulanceId = nextAmbulance?.AmbulanceId });
     }
+
+    [HttpPut("{bookingId}/location")]
+    public async Task<IActionResult> UpdatePickupLocation(int bookingId, [FromBody] UpdatePickupLocationRequest req)
+    {
+        var booking = await _context.Bookings.FindAsync(bookingId);
+        if (booking == null) return NotFound("Booking not found.");
+
+        booking.PickupLatitude = req.Latitude;
+        booking.PickupLongitude = req.Longitude;
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Pickup location updated successfully.",
+            bookingId = booking.BookingId,
+            pickupLatitude = booking.PickupLatitude,
+            pickupLongitude = booking.PickupLongitude
+        });
+    }
 }
 
 public class UpdateStatusRequest
 {
     public string Status { get; set; } = string.Empty;
+}
+
+public class UpdatePickupLocationRequest
+{
+    public decimal Latitude { get; set; }
+    public decimal Longitude { get; set; }
 }

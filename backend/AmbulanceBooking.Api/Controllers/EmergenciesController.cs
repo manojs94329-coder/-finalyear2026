@@ -52,6 +52,39 @@ public class EmergenciesController : ControllerBase
         return Ok(MapToDto(session));
     }
 
+    public static EmergencySession RegisterSosFromBooking(int userId, string victimName, string phone, double lat, double lng, string baseUrl)
+    {
+        var emergencyId = $"SOS-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        var mapsUrl = $"https://maps.google.com/?q={lat:F6},{lng:F6}";
+        var agoraChannel = $"emergency_room_{emergencyId.ToLowerInvariant().Replace("-", "_")}";
+        var agoraUrl = $"https://emergency-agora.stream/room/{agoraChannel}";
+        var unbookUrl = $"{baseUrl.TrimEnd('/')}/#/emergency-unbook?id={emergencyId}";
+
+        var session = new EmergencySession
+        {
+            EmergencyId = emergencyId,
+            UserId = userId,
+            VictimName = string.IsNullOrWhiteSpace(victimName) ? "Emergency SOS Citizen" : victimName,
+            PhoneNumber = string.IsNullOrWhiteSpace(phone) ? "9840112233" : phone,
+            SecondaryContactName = "Emergency Family Contact",
+            SecondaryContactPhone = "9444011223",
+            Latitude = lat,
+            Longitude = lng,
+            BatteryLevel = 85,
+            IsCriticalBattery = false,
+            TransmissionPath = "1_Tap_Instant_SOS",
+            Status = "ACTIVE_EMERGENCY",
+            AgoraChannel = agoraChannel,
+            AgoraStreamUrl = agoraUrl,
+            GoogleMapsUrl = mapsUrl,
+            UnbookUrl = unbookUrl,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _sessions[emergencyId] = session;
+        return session;
+    }
+
     [HttpGet("{id}")]
     public IActionResult GetEmergency(string id)
     {

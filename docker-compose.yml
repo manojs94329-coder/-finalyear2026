@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # ========================================================
+  # MySQL 8.0 Database Service (Persistent Data + Auto-Seed)
+  # ========================================================
+  mysql:
+    image: mysql:8.0
+    container_name: ambulance_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-Emergency@Secure2026!}
+      MYSQL_DATABASE: ambulance_booking_db
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/full_cloud_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - ambulance_net
+
+  # ========================================================
+  # ASP.NET Core API + Flutter Web Application + APK Download
+  # ========================================================
+  api:
+    build:
+      context: ./backend/AmbulanceBooking.Api
+      dockerfile: Dockerfile
+    container_name: ambulance_api
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - ConnectionStrings__DefaultConnection=server=mysql;port=3306;database=ambulance_booking_db;user=root;password=${DB_ROOT_PASSWORD:-Emergency@Secure2026!}
+      - Jwt__Key=${JWT_SECRET:-AmbulanceBookingSuperSecretKey2026DeploymentProduction}
+      - Jwt__Issuer=AmbulanceBookingApi
+      - Jwt__Audience=AmbulanceBookingMobileApp
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5000
+    ports:
+      - "80:5000"     # Primary Web & API port (HTTP)
+      - "5000:5000"   # Direct API port
+    networks:
+      - ambulance_net
+
+  # ========================================================
+  # Optional Cloudflare Tunnel Daemon (Permanent 24/7 HTTPS)
+  # Uncomment or provide TUNNEL_TOKEN in .env to use
+  # ========================================================
+  # tunnel:
+  #   image: cloudflare/cloudflared:latest
+  #   container_name: ambulance_tunnel
+  #   restart: always
+  #   command: tunnel run
+  #   environment:
+  #     - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+  #   depends_on:
+  #     - api
+  #   networks:
+  #     - ambulance_net
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  ambulance_net:
+    driver: bridge
