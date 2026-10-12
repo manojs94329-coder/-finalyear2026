@@ -1,0 +1,13 @@
+**/.git
+**/.vs
+**/.vscode
+**/bin
+**/obj
+**/*.user
+**/*.suo
+mobile/ambulance_booking_app/.dart_tool
+mobile/ambulance_booking_app/build
+mobile/ambulance_booking_app/windows
+mobile/ambulance_booking_app/linux
+mobile/ambulance_booking_app/macos
+mobile/ambulance_booking_app/ios
