@@ -3,7 +3,7 @@ window.EmergencyStream = {
   // Motion & Shake Sensor State
   motionListener: null,
   isSensorArmed: false,
-  shakeThreshold: 7.5,
+  shakeThreshold: 10.0,
   lastGForce: 1.0,
   lastX: 0.0,
   lastY: 0.0,
@@ -66,7 +66,7 @@ window.EmergencyStream = {
         }
 
         if (window.EmergencyStream.isSensorArmed && (gForce >= window.EmergencyStream.shakeThreshold || vibScore >= 98)) {
-          window.EmergencyStream.triggerCrash("Mobile Sensor Over-Shaking & Impact (" + gForce.toFixed(2) + "G >= 7.5G Limit)");
+          window.EmergencyStream.triggerCrash("Mobile Sensor Over-Shaking & Impact (" + gForce.toFixed(2) + "G >= 10.0G Limit)");
         }
       };
 
@@ -83,7 +83,7 @@ window.EmergencyStream = {
   },
 
   simulateCrashShake: function(simulatedGForce) {
-    var g = simulatedGForce || 8.5;
+    var g = simulatedGForce || 11.5;
     this.lastGForce = g;
     this.vibrationLevel = 100;
     this.lastX = 48.5;
@@ -96,7 +96,7 @@ window.EmergencyStream = {
       } catch (e) {}
     }
 
-    this.triggerCrash("Simulated Severe Crash Impact (" + g.toFixed(1) + "G Mobile Vibration Spike - Limit 7.5G Exceeded)");
+    this.triggerCrash("Simulated Severe Crash Impact (" + g.toFixed(1) + "G Mobile Vibration Spike - Limit 10.0G Exceeded)");
   },
 
   triggerCrash: function(reason) {

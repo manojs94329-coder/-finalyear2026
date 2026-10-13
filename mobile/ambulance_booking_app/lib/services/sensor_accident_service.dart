@@ -28,7 +28,7 @@ class SensorAccidentService {
   SensorAccidentService._internal();
 
   bool _isArmed = false;
-  double _shakeSensitivityThreshold = 7.5; // G-force threshold (7.5G Limit)
+  double _shakeSensitivityThreshold = 10.0; // G-force threshold (10.0G Limit)
   Timer? _simulatedSensorTimer;
 
   // Stream controllers
@@ -128,7 +128,7 @@ class SensorAccidentService {
     }
   }
 
-  void simulateViolentCrash({double gForce = 8.5}) {
+  void simulateViolentCrash({double gForce = 11.5}) {
     if (kIsWeb) {
       try {
         final emergencyStream = js.context['EmergencyStream'];
@@ -150,7 +150,7 @@ class SensorAccidentService {
     );
     _telemetryController.add(tel);
     _crashController.add({
-      'reason': "Severe Crash Impact Detected (${gForce.toStringAsFixed(1)}G Mobile Sensor Spike - Limit 7.5G Exceeded)",
+      'reason': "Severe Crash Impact Detected (${gForce.toStringAsFixed(1)}G Mobile Sensor Spike - Limit 10.0G Exceeded)",
       'gForce': gForce,
     });
   }

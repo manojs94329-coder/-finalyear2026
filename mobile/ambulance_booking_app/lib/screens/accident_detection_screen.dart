@@ -878,21 +878,21 @@ class _AccidentDetectionScreenState extends State<AccidentDetectionScreen> with 
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: _currentGForce >= 7.5
+                            color: _currentGForce >= 10.0
                                 ? Colors.red.withOpacity(0.25)
-                                : (_currentGForce >= 4.0 ? Colors.orange.withOpacity(0.2) : const Color(0xFF0284C7).withOpacity(0.2)),
+                                : (_currentGForce >= 5.0 ? Colors.orange.withOpacity(0.2) : const Color(0xFF0284C7).withOpacity(0.2)),
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: _currentGForce >= 7.5
+                              color: _currentGForce >= 10.0
                                   ? Colors.redAccent
-                                  : (_currentGForce >= 4.0 ? Colors.orangeAccent : const Color(0xFF38BDF8)),
+                                  : (_currentGForce >= 5.0 ? Colors.orangeAccent : const Color(0xFF38BDF8)),
                             ),
                           ),
                           child: Icon(
                             Icons.speed,
-                            color: _currentGForce >= 7.5
+                            color: _currentGForce >= 10.0
                                 ? Colors.redAccent
-                                : (_currentGForce >= 4.0 ? Colors.orangeAccent : const Color(0xFF38BDF8)),
+                                : (_currentGForce >= 5.0 ? Colors.orangeAccent : const Color(0xFF38BDF8)),
                             size: 28,
                           ),
                         ),
@@ -908,9 +908,9 @@ class _AccidentDetectionScreenState extends State<AccidentDetectionScreen> with 
                                     style: TextStyle(
                                       fontSize: 24,
                                       fontWeight: FontWeight.bold,
-                                      color: _currentGForce >= 7.5
+                                      color: _currentGForce >= 10.0
                                           ? Colors.redAccent
-                                          : (_currentGForce >= 4.0 ? Colors.orangeAccent : Colors.white),
+                                          : (_currentGForce >= 5.0 ? Colors.orangeAccent : Colors.white),
                                     ),
                                   ),
                                   const SizedBox(width: 10),
@@ -921,7 +921,7 @@ class _AccidentDetectionScreenState extends State<AccidentDetectionScreen> with 
                                       borderRadius: BorderRadius.circular(6),
                                       border: Border.all(color: const Color(0xFF38BDF8).withOpacity(0.6)),
                                     ),
-                                    child: const Text("LIMIT: 7.5 G", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold)),
+                                    child: const Text("LIMIT: 10.0 G", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold)),
                                   ),
                                 ],
                               ),
@@ -986,7 +986,7 @@ class _AccidentDetectionScreenState extends State<AccidentDetectionScreen> with 
                   children: [
                     const Text("AUTOMATED ACCIDENT PROTOCOLS", style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
-                    _buildProtocolRow(Icons.vibration, "Over-Shaking / Vibration Trigger", "Threshold: >= 7.5 G-force (Over-Shaking / Vibration Limit)"),
+                    _buildProtocolRow(Icons.vibration, "Over-Shaking / Vibration Trigger", "Threshold: >= 10.0 G-force (Over-Shaking / Vibration Limit)"),
                     const SizedBox(height: 6),
                     _buildProtocolRow(Icons.timer, "SOS Alarm Countdown", "40 Seconds Siren & Cancellation Window before auto-dispatch"),
                     const SizedBox(height: 6),
@@ -1001,10 +1001,10 @@ class _AccidentDetectionScreenState extends State<AccidentDetectionScreen> with 
               // Test Simulation Buttons
               ElevatedButton.icon(
                 onPressed: () {
-                  _sensorService.simulateViolentCrash(gForce: 8.5);
+                  _sensorService.simulateViolentCrash(gForce: 11.5);
                 },
                 icon: const Icon(Icons.flash_on, color: Colors.white),
-                label: const Text("💥 SIMULATE VIOLENT SHAKE / CRASH IMPACT (> 7.5G)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
+                label: const Text("💥 SIMULATE VIOLENT SHAKE / CRASH IMPACT (> 10G)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFDC2626),
                   padding: const EdgeInsets.symmetric(vertical: 16),
