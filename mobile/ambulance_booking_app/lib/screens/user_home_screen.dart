@@ -14,6 +14,7 @@ import 'first_aid_guide_screen.dart';
 import 'accident_detection_screen.dart';
 import 'login_screen.dart';
 import '../services/url_launcher_service.dart';
+import '../services/web_geolocation_service.dart';
 
 class UserHomeScreen extends StatefulWidget {
   final int userId;
@@ -120,28 +121,12 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   Future<void> _fetchLocation() async {
     setState(() => _isLocating = true);
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() => _isLocating = false);
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        setState(() => _isLocating = false);
-        return;
-      }
-
-      Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final loc = await WebGeolocationService().fetchLiveLocation();
       if (mounted) {
         setState(() {
-          _lat = pos.latitude;
-          _lng = pos.longitude;
-          _currentAddress = "${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)} (GPS Exact)";
+          _lat = loc.latitude;
+          _lng = loc.longitude;
+          _currentAddress = "${loc.latitude.toStringAsFixed(4)}, ${loc.longitude.toStringAsFixed(4)} (GPS Exact)";
           _isLocating = false;
         });
       }

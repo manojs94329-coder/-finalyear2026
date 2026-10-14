@@ -7,6 +7,7 @@ import '../services/booking_service.dart';
 import '../services/ambulance_service.dart';
 import '../services/emergency_siren_service.dart';
 import '../services/url_launcher_service.dart';
+import '../services/web_geolocation_service.dart';
 
 class TrackingScreen extends StatefulWidget {
   final int bookingId;
@@ -116,31 +117,18 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
   Future<void> _calibrateGpsLocation() async {
     setState(() => _isCalibrating = true);
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw "Location services are turned off on your device. Please enable GPS.";
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        throw "GPS permission was denied. Please allow location access in your browser/device.";
-      }
-
-      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      await _bookingService.updatePickupLocation(widget.bookingId, pos.latitude, pos.longitude);
+      final loc = await WebGeolocationService().fetchLiveLocation();
+      await _bookingService.updatePickupLocation(widget.bookingId, loc.latitude, loc.longitude);
 
       if (mounted) {
         setState(() {
-          _liveUserLat = pos.latitude;
-          _liveUserLng = pos.longitude;
-          _liveAccuracyMeters = pos.accuracy;
+          _liveUserLat = loc.latitude;
+          _liveUserLng = loc.longitude;
+          _liveAccuracyMeters = loc.accuracy;
           _isGpsActive = true;
           if (_booking != null) {
-            _booking["pickupLatitude"] = pos.latitude;
-            _booking["pickupLongitude"] = pos.longitude;
+            _booking["pickupLatitude"] = loc.latitude;
+            _booking["pickupLongitude"] = loc.longitude;
           }
           _isCalibrating = false;
         });
@@ -154,7 +142,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    "🎯 Live GPS Calibrated! Paramedic unit routed to: ${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)} (±${pos.accuracy.toStringAsFixed(0)}m accuracy)",
+                    "🎯 Live GPS Calibrated! Map centered & marker updated at: ${loc.latitude.toStringAsFixed(4)}, ${loc.longitude.toStringAsFixed(4)} (±${loc.accuracy.toStringAsFixed(0)}m accuracy)",
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                   ),
                 ),
@@ -1093,38 +1081,64 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
           // Action Toolbar: Calibrate & Change Location buttons
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isCalibrating ? null : _calibrateGpsLocation,
-                    icon: _isCalibrating
-                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.gps_fixed, size: 15, color: Colors.white),
-                    label: Text(
-                      _isCalibrating ? "Syncing..." : "🎯 Calibrate GPS",
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.white),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _isCalibrating ? null : _calibrateGpsLocation,
+                        icon: _isCalibrating
+                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.gps_fixed, size: 15, color: Colors.white),
+                        label: Text(
+                          _isCalibrating ? "Syncing..." : "🎯 Calibrate GPS",
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.white),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0C831F),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0C831F),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _showChangeLocationDialog,
+                        icon: const Icon(Icons.edit_location_alt, size: 15, color: Colors.white),
+                        label: const Text(
+                          "📍 Change Location",
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.white),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF3B82F6),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Expanded(
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _showChangeLocationDialog,
-                    icon: const Icon(Icons.edit_location_alt, size: 15, color: Colors.white),
+                    onPressed: () {
+                      UrlLauncherService.openUrl("/live_map.html");
+                    },
+                    icon: const Icon(Icons.satellite_alt, size: 15, color: Colors.white),
                     label: const Text(
-                      "📍 Change Location",
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.white),
+                      "🛰️ OPEN FULL-SCREEN LIVE GPS & RADAR MAP",
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF3B82F6),
+                      backgroundColor: const Color(0xFF0F172A),
                       padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: const BorderSide(color: Color(0xFF10B981), width: 1),
+                      ),
                     ),
                   ),
                 ),

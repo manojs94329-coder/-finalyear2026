@@ -349,5 +349,199 @@ window.EmergencyStream = {
     this.currentFacingMode = this.currentFacingMode === "user" ? "environment" : "user";
     this.stopLiveBroadcast();
     this.startLiveBroadcastWithRelay(this.activeEmergencyId, this.uploadUrl, this.onAudioLevelCallback, this.onFrameCapturedCallback, onReady);
+  },
+
+  // ----------------------------------------------------
+  // 3. LIVE GEOLOCATION & MAP CENTERING FACILITY
+  // ----------------------------------------------------
+  lastLiveLocation: null,
+  activeLocationWatchId: null,
+  activeMapMarker: null,
+  activeAccuracyCircle: null,
+
+  /**
+   * Fetches real-time location via navigator.geolocation.getCurrentPosition.
+   * Prompts user for browser permission, extracts latitude & longitude,
+   * passes coordinates to map.setCenter(), and places a marker to visualize position.
+   */
+  fetchLiveLocation: function(map, onSuccess, onError, options) {
+    var self = this;
+    if (!navigator.geolocation) {
+      var errObj = { code: 0, message: "Geolocation is not supported by this browser/device." };
+      console.warn(errObj.message);
+      if (typeof onError === "function") onError(errObj);
+      return;
+    }
+
+    var geoOptions = options || {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      function(position) {
+        var lat = position.coords.latitude;
+        var lng = position.coords.longitude;
+        var accuracy = position.coords.accuracy || 10;
+        var userLocation = { lat: lat, lng: lng };
+
+        self.lastLiveLocation = {
+          latitude: lat,
+          longitude: lng,
+          accuracy: accuracy,
+          speed: position.coords.speed,
+          heading: position.coords.heading,
+          timestamp: position.timestamp || Date.now()
+        };
+
+        // 1. Pass latitude & longitude to map's setCenter method
+        if (map) {
+          self.updateMapCenterAndMarker(map, lat, lng, accuracy);
+        }
+
+        // 2. Notify callbacks
+        if (typeof onSuccess === "function") {
+          onSuccess({
+            latitude: lat,
+            longitude: lng,
+            accuracy: accuracy,
+            location: userLocation,
+            timestamp: self.lastLiveLocation.timestamp
+          });
+        }
+      },
+      function(error) {
+        console.warn("navigator.geolocation.getCurrentPosition error:", error);
+        if (typeof onError === "function") {
+          onError(error);
+        }
+      },
+      geoOptions
+    );
+  },
+
+  updateMapCenterAndMarker: function(map, lat, lng, accuracy) {
+    if (!map) return;
+    var userLocation = { lat: lat, lng: lng };
+
+    // Pass coordinates to map.setCenter
+    if (typeof map.setCenter === "function") {
+      try {
+        map.setCenter(userLocation);
+      } catch (e1) {
+        try { map.setCenter(lat, lng); } catch (e2) {}
+      }
+    } else if (typeof map.panTo === "function") {
+      try { map.panTo(userLocation); } catch (e) {}
+    } else if (typeof map.setView === "function") {
+      try { map.setView([lat, lng], map.getZoom() || 16); } catch (e) {}
+    }
+
+    // Add or update marker to visualize user's position
+    if (window.google && window.google.maps) {
+      if (this.activeMapMarker && typeof this.activeMapMarker.setPosition === "function") {
+        this.activeMapMarker.setPosition(userLocation);
+      } else if (typeof window.google.maps.Marker === "function") {
+        this.activeMapMarker = new window.google.maps.Marker({
+          position: userLocation,
+          map: map,
+          title: "Your Live Location (±" + Math.round(accuracy) + "m)",
+          animation: window.google.maps.Animation ? window.google.maps.Animation.DROP : null
+        });
+      }
+    } else if (window.L && typeof window.L.marker === "function" && typeof map.addLayer === "function") {
+      if (this.activeMapMarker && typeof this.activeMapMarker.setLatLng === "function") {
+        this.activeMapMarker.setLatLng([lat, lng]);
+      } else {
+        var userIcon = window.L.divIcon({
+          className: "user-live-pin",
+          html: "<div style='width:22px;height:22px;background:#10B981;border:3px solid white;border-radius:50%;box-shadow:0 0 12px rgba(16,185,129,0.8);animation:pulse 2s infinite;'></div>",
+          iconSize: [22, 22],
+          iconAnchor: [11, 11]
+        });
+        this.activeMapMarker = window.L.marker([lat, lng], { icon: userIcon }).addTo(map);
+      }
+
+      if (accuracy) {
+        if (this.activeAccuracyCircle && typeof this.activeAccuracyCircle.setLatLng === "function") {
+          this.activeAccuracyCircle.setLatLng([lat, lng]);
+          this.activeAccuracyCircle.setRadius(accuracy);
+        } else if (typeof window.L.circle === "function") {
+          this.activeAccuracyCircle = window.L.circle([lat, lng], {
+            radius: accuracy,
+            color: "#10B981",
+            fillColor: "#10B981",
+            fillOpacity: 0.15,
+            weight: 1.5
+          }).addTo(map);
+        }
+      }
+    } else if (typeof map.addMarker === "function") {
+      this.activeMapMarker = map.addMarker({ lat: lat, lng: lng, label: "Live Location", accuracy: accuracy });
+    }
+  },
+
+  watchLiveLocation: function(map, onUpdate, onError, options) {
+    var self = this;
+    if (!navigator.geolocation) return;
+    this.stopWatchingLocation();
+
+    this.activeLocationWatchId = navigator.geolocation.watchPosition(
+      function(pos) {
+        var lat = pos.coords.latitude;
+        var lng = pos.coords.longitude;
+        var acc = pos.coords.accuracy || 10;
+        self.lastLiveLocation = {
+          latitude: lat,
+          longitude: lng,
+          accuracy: acc,
+          speed: pos.coords.speed,
+          heading: pos.coords.heading,
+          timestamp: pos.timestamp || Date.now()
+        };
+
+        if (map) {
+          self.updateMapCenterAndMarker(map, lat, lng, acc);
+        }
+
+        if (typeof onUpdate === "function") {
+          onUpdate(self.lastLiveLocation);
+        }
+      },
+      onError,
+      options || { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 }
+    );
+  },
+
+  stopWatchingLocation: function() {
+    if (this.activeLocationWatchId !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(this.activeLocationWatchId);
+      this.activeLocationWatchId = null;
+    }
   }
 };
+
+// Global direct function accessible across windows and web views
+window.fetchLiveLocation = function(map, onSuccess, onError, options) {
+  if (window.EmergencyStream && window.EmergencyStream.fetchLiveLocation) {
+    return window.EmergencyStream.fetchLiveLocation(map, onSuccess, onError, options);
+  } else if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        var lat = pos.coords.latitude;
+        var lng = pos.coords.longitude;
+        var userLocation = { lat: lat, lng: lng };
+        if (map && typeof map.setCenter === "function") {
+          map.setCenter(userLocation);
+        }
+        if (typeof onSuccess === "function") {
+          onSuccess({ latitude: lat, longitude: lng, location: userLocation });
+        }
+      },
+      onError,
+      options || { enableHighAccuracy: true }
+    );
+  }
+};
+
